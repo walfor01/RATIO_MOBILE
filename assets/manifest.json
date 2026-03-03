@@ -1,0 +1,21 @@
+{
+  "short_name": "Ratio",
+  "name": "RATIO Mobile",
+  "description": "App Gestionale Ratio Mobile",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#FAF8F5",
+  "display": "standalone",
+  "theme_color": "#3D3935"
+}
