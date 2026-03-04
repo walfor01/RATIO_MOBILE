@@ -1,140 +1,192 @@
 """
-ai_sql.py — Router semantico: usa Groq per interpretare la domanda
-             e chiama le query predefinite da queries.py.
-             Poi riformatta il risultato in italiano naturale.
+ai_sql.py — Chat-to-SQL libero con validazione colonne.
+L'utente scrive liberamente, Groq genera SQL, il sistema valida le colonne
+prima dell'esecuzione per evitare errori da colonne inventate.
 """
 
+import re
 import decimal
 import datetime
+import psycopg
 from groq import Groq
-from bot.config import GROQ_API_KEY
-from bot import queries
+from bot.config import GROQ_API_KEY, DATABASE_URL
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# ─── CATALOGO DELLE QUERY DISPONIBILI ─────────────────────────────────────────
+# ─── Colonne REALI del database (whitelist per validazione) ─────────────────
+VALID_COLUMNS = {
+    # preventivo
+    "id", "nome_cliente", "data_creazione", "status",
+    "totale_generale", "totale_ivato",
+    # righepreventivo
+    "preventivo_id", "ambiente", "descrizione", "categoria",
+    "fornitore", "quantita", "prezzo_vendita_no_iva",
+    "prezzo_vendita_ivato", "utile_euro",
+    "data_consegna", "data_installazione",
+    # alias comuni usati nelle query
+    "fatturato", "totale", "count", "sum", "avg", "max", "min",
+    "numero_preventivi", "valore", "valore_totale", "fatturato_totale",
+    "utile_totale", "righe", "preventivi", "nome", "cliente",
+}
 
-QUERY_CATALOG = """
-Hai a disposizione queste funzioni per rispondere alle domande dell'utente:
+# ─── Sistema prompt per la generazione SQL ──────────────────────────────────
+SYSTEM_SQL = """Sei un esperto SQL per PostgreSQL. Hai accesso a questo database di un'azienda italiana di arredamento chiamata RATIO.
 
-1. FATTURATO → domande su fatturato totale, ricavi, vendite, quanto abbiamo fatto
-2. STATISTICHE → domande su quanti preventivi, quante bozze, quanti confermati, situazione generale
-3. SCADENZE → domande su consegne, montaggi, ordini in arrivo, cosa c'è questa settimana/mese
-4. CLIENTI → domande su i migliori clienti, chi ha speso di più, top clienti
-5. RECENTI → domande sugli ultimi preventivi, cosa abbiamo fatto di recente
-6. UTILE → domande su margine, guadagno, utile netto, profitto
-7. FORNITORI → domande su fornitori, acquisti, da chi compriamo
-8. CERCA:[nome] → se l'utente menziona il nome di un cliente specifico (es. "Rossi", "Bianchi")
+TABELLA preventivo:
+  id (integer), nome_cliente (varchar), data_creazione (date),
+  status (varchar) — valori: 'BOZZA', 'CONFERMATO', 'FATTURATO', 'ANNULLATO',
+  totale_generale (numeric) — imponibile in €,
+  totale_ivato (numeric) — totale con IVA in €
 
-Rispondi SOLO con una delle parole chiave sopra (es: FATTURATO, oppure CERCA:Rossi).
-Non aggiungere nient'altro.
-"""
+TABELLA righepreventivo:
+  id (integer), preventivo_id (integer FK→preventivo.id),
+  ambiente (varchar), descrizione (varchar), categoria (varchar),
+  fornitore (varchar), quantita (numeric),
+  prezzo_vendita_no_iva (numeric), prezzo_vendita_ivato (numeric),
+  utile_euro (numeric) — margine netto,
+  data_consegna (varchar) — può essere 'DD/MM/YYYY' o 'YYYY-MM-DD',
+  data_installazione (varchar) — stesso formato di data_consegna
 
-NATURAL_SYSTEM = """Sei un assistente aziendale professionale italiano per RATIO, azienda di arredamento.
-Trasforma dati grezzi del database in risposte concise, calde e professionali in italiano.
-- Formatta i numeri in euro: es. 181.494,78 €
-- Usa emoji appropriate
-- Sii diretto, non verboso
+REGOLE CRITICHE:
+1. Genera SOLO SELECT. Mai INSERT/UPDATE/DELETE/DROP/ALTER.
+2. Rispondi SOLO con SQL puro. Zero spiegazioni o markdown.
+3. Per status: usa UPPER(status) nei confronti.
+4. Per le date (data_consegna, data_installazione): sono VARCHAR con formato misto.
+   Usa questa espressione sicura per convertirle:
+   CASE WHEN data_consegna LIKE '__/__/____' THEN TO_DATE(data_consegna,'DD/MM/YYYY')
+        WHEN data_consegna LIKE '____-__-__' THEN TO_DATE(data_consegna,'YYYY-MM-DD')
+        ELSE NULL END
+5. Quando l'utente chiede "fatturato", "ricavi", "vendite": usa totale_generale con status IN ('CONFERMATO','FATTURATO').
+6. Quando l'utente chiede "utile" o "margine": usa utile_euro da righepreventivo.
+7. LIMIT 20 sempre.
+8. USA SOLO colonne elencate sopra. Non inventare colonne."""
+
+SYSTEM_NATURAL = """Sei un assistente aziendale professionale italiano per RATIO, azienda di arredamento di lusso.
+Trasformi dati del database in risposte concise e naturali in italiano.
+- Numeri in euro: 181.494,78 €
+- Usa emoji appropriate ma con misura
+- Sii diretto e professionale
 - Se non ci sono dati, dillo gentilmente"""
 
 
+def _clean_sql(raw: str) -> str:
+    """Rimuove markdown extra dal SQL generato da Groq."""
+    return re.sub(r"```(?:sql)?", "", raw).strip("`").strip()
+
+
+def _validate_columns(sql: str) -> list[str]:
+    """Controlla che il SQL non contenga colonne inventate. Restituisce lista di colonne sconosciute."""
+    # Estrae parole che potrebbero essere nomi di colonna (dopo SELECT, WHERE, ORDER BY ecc.)
+    # Rimuovi stringhe tra apici, numeri, keywords SQL e funzioni note
+    sql_clean = re.sub(r"'[^']*'", "", sql)  # rimuovi stringhe
+    sql_clean = re.sub(r"\b\d+\b", "", sql_clean)  # rimuovi numeri
+    tokens = re.findall(r"\b([a-z_][a-z0-9_]*)\b", sql_clean.lower())
+
+    sql_keywords = {
+        "select", "from", "where", "join", "on", "and", "or", "not",
+        "in", "like", "between", "is", "null", "order", "by", "group",
+        "having", "limit", "offset", "as", "distinct", "case", "when",
+        "then", "else", "end", "upper", "lower", "coalesce", "sum",
+        "count", "avg", "max", "min", "to_date", "current_date",
+        "interval", "cast", "inner", "left", "right", "outer",
+        "preventivo", "righepreventivo", "desc", "asc", "true", "false",
+        "varchar", "integer", "numeric", "date", "days"
+    }
+
+    unknown = []
+    for token in tokens:
+        if token not in sql_keywords and token not in VALID_COLUMNS and len(token) > 2:
+            unknown.append(token)
+
+    return unknown
+
+
+def _fmt_val(v) -> str:
+    if isinstance(v, (decimal.Decimal, float)):
+        return f"{float(v):,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
+    if isinstance(v, datetime.date):
+        return v.strftime("%d/%m/%Y")
+    return str(v) if v is not None else "—"
+
+
 def _rows_to_text(rows) -> str:
-    """Converte risultati DB in testo leggibile per l'AI."""
     if not rows:
-        return "Nessun dato disponibile."
-
-    def fmt_val(v):
-        if isinstance(v, (decimal.Decimal, float)):
-            return f"{float(v):,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
-        if isinstance(v, datetime.date):
-            return v.strftime("%d/%m/%Y")
-        return str(v) if v is not None else "—"
-
+        return "Nessun dato trovato."
     if isinstance(rows, dict):
-        return "\n".join(f"{k}: {fmt_val(v)}" for k, v in rows.items() if v is not None)
-
+        return "\n".join(f"{k}: {_fmt_val(v)}" for k, v in rows.items() if v is not None)
     lines = []
     for i, row in enumerate(rows[:15], 1):
-        parts = [f"{k}: {fmt_val(v)}" for k, v in row.items() if v is not None]
+        parts = [f"{k}: {_fmt_val(v)}" for k, v in row.items() if v is not None]
         lines.append(f"{i}. " + " | ".join(parts))
     if len(rows) > 15:
         lines.append(f"... e altri {len(rows)-15} risultati")
     return "\n".join(lines)
 
 
-def _natural_response(user_question: str, data_text: str) -> str:
-    """Chiede a Groq di formulare una risposta naturale in italiano."""
-    prompt = f'L\'utente ha chiesto: "{user_question}"\n\nDati dal gestionale:\n{data_text}\n\nRispondi in italiano naturale e conciso.'
+def _run_sql(sql: str) -> list[dict]:
+    """Esegue SQL in sola lettura."""
+    forbidden = ["insert", "update", "delete", "drop", "alter", "truncate"]
+    if any(k in sql.lower() for k in forbidden):
+        raise ValueError("Operazione non permessa")
+    with psycopg.connect(DATABASE_URL) as conn:
+        conn.read_only = True
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def _natural(user_question: str, data_text: str) -> str:
     resp = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
-            {"role": "system", "content": NATURAL_SYSTEM},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": SYSTEM_NATURAL},
+            {"role": "user", "content": f'L\'utente ha chiesto: "{user_question}"\n\nDati:\n{data_text}\n\nRispondi in italiano naturale e conciso.'}
         ],
-        temperature=0.3,
-        max_tokens=300
+        temperature=0.3, max_tokens=300
     )
     return resp.choices[0].message.content.strip()
 
 
-def _route_question(user_question: str) -> str:
-    """Usa Groq per capire quale query usare. Restituisce la keyword."""
-    resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": QUERY_CATALOG},
-            {"role": "user", "content": user_question}
-        ],
-        temperature=0.0,
-        max_tokens=20
-    )
-    return resp.choices[0].message.content.strip().upper()
-
-
 def answer_question(user_question: str) -> str:
-    """Pipeline principale: domanda → routing → query predefinita → risposta naturale."""
+    """Pipeline: domanda libera → SQL (Groq) → validazione colonne → esecuzione → risposta naturale."""
     try:
-        intent = _route_question(user_question)
+        # Step 1: genera SQL
+        resp = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": SYSTEM_SQL},
+                {"role": "user", "content": user_question}
+            ],
+            temperature=0.05,
+            max_tokens=600
+        )
+        sql = _clean_sql(resp.choices[0].message.content)
 
-        if intent == "FATTURATO":
-            data = queries.q_fatturato()
-            data_text = _rows_to_text(data)
+        # Step 2: valida colonne
+        unknown = _validate_columns(sql)
+        if unknown:
+            # Filtra falsi positivi comuni
+            real_unknown = [u for u in unknown if u not in {
+                "imponibile", "ivato", "attivi", "confermati", "recenti"
+            }]
+            if real_unknown:
+                return (f"⚠️ Non ho trovato nel database alcuni elementi della tua domanda. "
+                        f"Prova a riformulare.\n_(riferimento a: {', '.join(real_unknown[:3])})_")
 
-        elif intent == "STATISTICHE":
-            data = queries.q_preventivi_per_status()
-            data_text = _rows_to_text(data)
+        # Step 3: esegui
+        rows = _run_sql(sql)
 
-        elif intent == "SCADENZE":
-            data = queries.q_scadenze_prossimi_giorni(14)
-            data_text = _rows_to_text(data) if data else "Nessuna scadenza nei prossimi 14 giorni."
+        # Step 4: risposta naturale
+        data_text = _rows_to_text(rows)
+        return _natural(user_question, data_text)
 
-        elif intent == "CLIENTI":
-            data = queries.q_clienti_principali()
-            data_text = _rows_to_text(data)
-
-        elif intent == "RECENTI":
-            data = queries.q_preventivi_recenti()
-            data_text = _rows_to_text(data)
-
-        elif intent == "UTILE":
-            data = queries.q_utile_totale()
-            data_text = _rows_to_text(data)
-
-        elif intent == "FORNITORI":
-            data = queries.q_fornitore_statistiche()
-            data_text = _rows_to_text(data)
-
-        elif intent.startswith("CERCA:"):
-            nome = intent.replace("CERCA:", "").strip().capitalize()
-            data = queries.q_cerca_cliente(nome)
-            data_text = _rows_to_text(data) if data else f"Nessun cliente trovato con nome '{nome}'."
-
-        else:
-            # Fallback generico
-            data = queries.q_preventivi_per_status()
-            data_text = _rows_to_text(data)
-
-        return _natural_response(user_question, data_text)
-
+    except ValueError as e:
+        return f"⛔ {e}"
     except Exception as e:
-        return f"❌ Si è verificato un problema tecnico. Riprova tra poco.\n`{e}`"
+        err = str(e)
+        if "does not exist" in err:
+            return "⚠️ Non ho capito la domanda. Prova a riformularla diversamente."
+        if "out of range" in err or "invalid input" in err:
+            return "⚠️ Problema nel confronto delle date. Prova con: *'consegne di marzo'* o *'scadenze prossimi 7 giorni'*."
+        return f"❌ Problema tecnico. Riprova tra poco."
