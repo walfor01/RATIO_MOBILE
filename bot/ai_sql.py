@@ -45,7 +45,11 @@ WHERE r.data_consegna IS NOT NULL
 ORDER BY r.data_consegna LIMIT 20;
 
 -- Fatturato confermati:
-SELECT SUM(totale_generale) AS fatturato FROM preventivo WHERE UPPER(status) = 'CONFERMATO';
+SELECT SUM(totale_generale) AS fatturato FROM preventivo WHERE UPPER(status) IN ('CONFERMATO', 'FATTURATO');
+
+-- IMPORTANTE: Quando l'utente chiede "fatturato", "ricavi", "vendite" o "quanto abbiamo fatto",
+-- NON filtrare SOLO su status='FATTURATO'. Includi SEMPRE anche 'CONFERMATO' perche sono cantieri attivi.
+-- Esempio corretto: WHERE UPPER(status) IN ('CONFERMATO', 'FATTURATO')
 
 -- Preventivi in bozza:
 SELECT COUNT(*) as totale FROM preventivo WHERE UPPER(status) = 'BOZZA';
