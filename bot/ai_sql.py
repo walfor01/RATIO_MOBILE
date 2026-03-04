@@ -115,10 +115,10 @@ def _generate_sql(user_question: str, error_context: str = "") -> str:
         messages.append({"role": "user", "content": user_question})
 
     resp = client.chat.completions.create(
-        model="deepseek-r1-distill-llama-70b",  # modello reasoning: migliore per SQL
+        model="llama-3.3-70b-versatile",
         messages=messages,
         temperature=0.05,
-        max_tokens=1200  # più token per permettere il ragionamento interno
+        max_tokens=800
     )
     return _clean_sql(resp.choices[0].message.content)
 
