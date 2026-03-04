@@ -57,7 +57,16 @@ Converti dati grezzi in risposte naturali, concise e professionali in italiano.
 
 
 def _clean_sql(raw: str) -> str:
-    return re.sub(r"```(?:sql)?", "", raw).strip("`").strip()
+    """Rimuove markdown e blocchi <think> (DeepSeek reasoning) dal SQL generato."""
+    # Rimuovi blocchi <think>...</think> del modello reasoning
+    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
+    # Rimuovi markdown
+    raw = re.sub(r"```(?:sql)?", "", raw).strip("`").strip()
+    # Se c'è ancora testo prima del SELECT, prendi solo la parte SQL
+    if "SELECT" in raw.upper():
+        idx = raw.upper().find("SELECT")
+        raw = raw[idx:]
+    return raw.strip()
 
 
 def _fmt_val(v) -> str:
@@ -106,10 +115,10 @@ def _generate_sql(user_question: str, error_context: str = "") -> str:
         messages.append({"role": "user", "content": user_question})
 
     resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="deepseek-r1-distill-llama-70b",  # modello reasoning: migliore per SQL
         messages=messages,
         temperature=0.05,
-        max_tokens=600
+        max_tokens=1200  # più token per permettere il ragionamento interno
     )
     return _clean_sql(resp.choices[0].message.content)
 

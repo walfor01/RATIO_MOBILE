@@ -73,7 +73,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     await update.message.reply_text("🤔 Sto elaborando la tua domanda...")
     response = answer_question(user_text)
-    await update.message.reply_text(response, parse_mode="Markdown")
+    # Niente parse_mode per evitare crash con asterischi/underscore non bilanciati dall'AI
+    try:
+        await update.message.reply_text(response)
+    except Exception:
+        await update.message.reply_text(response.replace("*", "").replace("_", "").replace("`", ""))
 
 
 # ─────────────────────────────── JOB GIORNALIERO ───────────────────────────
