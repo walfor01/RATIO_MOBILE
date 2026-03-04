@@ -1,7 +1,6 @@
 """
-ai_sql.py — Chat-to-SQL libero con validazione colonne.
-L'utente scrive liberamente, Groq genera SQL, il sistema valida le colonne
-prima dell'esecuzione per evitare errori da colonne inventate.
+ai_sql.py — Chat-to-SQL libero con retry automatico su errore.
+L'utente scrive liberamente, Groq genera SQL, se fallisce prova a correggersi.
 """
 
 import re
@@ -13,92 +12,52 @@ from bot.config import GROQ_API_KEY, DATABASE_URL
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# ─── Colonne REALI del database (whitelist per validazione) ─────────────────
-VALID_COLUMNS = {
-    # preventivo
-    "id", "nome_cliente", "data_creazione", "status",
-    "totale_generale", "totale_ivato",
-    # righepreventivo
-    "preventivo_id", "ambiente", "descrizione", "categoria",
-    "fornitore", "quantita", "prezzo_vendita_no_iva",
-    "prezzo_vendita_ivato", "utile_euro",
-    "data_consegna", "data_installazione",
-    # alias comuni usati nelle query
-    "fatturato", "totale", "count", "sum", "avg", "max", "min",
-    "numero_preventivi", "valore", "valore_totale", "fatturato_totale",
-    "utile_totale", "righe", "preventivi", "nome", "cliente",
-}
+SYSTEM_SQL = """Sei un esperto SQL per PostgreSQL. Gestisci un database di un'azienda italiana di arredamento su misura chiamata RATIO.
 
-# ─── Sistema prompt per la generazione SQL ──────────────────────────────────
-SYSTEM_SQL = """Sei un esperto SQL per PostgreSQL. Hai accesso a questo database di un'azienda italiana di arredamento chiamata RATIO.
+SCHEMA ESATTO (usa SOLO queste tabelle e colonne):
 
 TABELLA preventivo:
-  id (integer), nome_cliente (varchar), data_creazione (date),
-  status (varchar) — valori: 'BOZZA', 'CONFERMATO', 'FATTURATO', 'ANNULLATO',
-  totale_generale (numeric) — imponibile in €,
-  totale_ivato (numeric) — totale con IVA in €
+  id, nome_cliente, data_creazione, status, totale_generale, totale_ivato
+
+  status può essere: 'BOZZA', 'CONFERMATO', 'FATTURATO', 'ANNULLATO'
 
 TABELLA righepreventivo:
-  id (integer), preventivo_id (integer FK→preventivo.id),
-  ambiente (varchar), descrizione (varchar), categoria (varchar),
-  fornitore (varchar), quantita (numeric),
-  prezzo_vendita_no_iva (numeric), prezzo_vendita_ivato (numeric),
-  utile_euro (numeric) — margine netto,
-  data_consegna (varchar) — può essere 'DD/MM/YYYY' o 'YYYY-MM-DD',
-  data_installazione (varchar) — stesso formato di data_consegna
+  id, preventivo_id, ambiente, descrizione, categoria, fornitore,
+  quantita, prezzo_vendita_no_iva, prezzo_vendita_ivato, utile_euro,
+  data_consegna, data_installazione
 
-REGOLE CRITICHE:
+DIZIONARIO SINONIMI (l'utente usa questi termini):
+- "ordini", "commesse", "cantieri", "lavori", "progetti" → si riferisce a "preventivo"
+- "fatturato", "ricavi", "vendite", "incassato" → SUM(totale_generale) su status IN ('CONFERMATO','FATTURATO')
+- "attivi", "aperti", "in corso" → status = 'CONFERMATO'
+- "margine", "utile", "guadagno", "profitto" → utile_euro in righepreventivo
+- "consegne", "scadenze", "in arrivo" → data_consegna o data_installazione
+
+GESTIONE DATE (data_consegna e data_installazione sono VARCHAR con formato misto):
+Per confrontare le date usa SEMPRE questa espressione:
+CASE WHEN col LIKE '__/__/____' THEN TO_DATE(col,'DD/MM/YYYY')
+     WHEN col LIKE '____-__-__' THEN TO_DATE(col,'YYYY-MM-DD')
+     ELSE NULL END
+
+Sostituisci "col" con la colonna specifica.
+
+REGOLE:
 1. Genera SOLO SELECT. Mai INSERT/UPDATE/DELETE/DROP/ALTER.
-2. Rispondi SOLO con SQL puro. Zero spiegazioni o markdown.
-3. Per status: usa UPPER(status) nei confronti.
-4. Per le date (data_consegna, data_installazione): sono VARCHAR con formato misto.
-   Usa questa espressione sicura per convertirle:
-   CASE WHEN data_consegna LIKE '__/__/____' THEN TO_DATE(data_consegna,'DD/MM/YYYY')
-        WHEN data_consegna LIKE '____-__-__' THEN TO_DATE(data_consegna,'YYYY-MM-DD')
-        ELSE NULL END
-5. Quando l'utente chiede "fatturato", "ricavi", "vendite": usa totale_generale con status IN ('CONFERMATO','FATTURATO').
-6. Quando l'utente chiede "utile" o "margine": usa utile_euro da righepreventivo.
-7. LIMIT 20 sempre.
-8. USA SOLO colonne elencate sopra. Non inventare colonne."""
+2. Rispondi SOLO con SQL puro. Niente markdown, backtick o spiegazioni.
+3. Per status usa UPPER(status).
+4. LIMIT 20 sempre.
+5. Usa SOLO le colonne elencate sopra - non inventare mai colonne nuove."""
 
-SYSTEM_NATURAL = """Sei un assistente aziendale professionale italiano per RATIO, azienda di arredamento di lusso.
-Trasformi dati del database in risposte concise e naturali in italiano.
-- Numeri in euro: 181.494,78 €
-- Usa emoji appropriate ma con misura
-- Sii diretto e professionale
-- Se non ci sono dati, dillo gentilmente"""
+SYSTEM_NATURAL = """Sei un assistente aziendale professionale italiano per RATIO, azienda di arredamento.
+Converti dati grezzi in risposte naturali, concise e professionali in italiano.
+- Numeri in euro: es. 181.494,78 €
+- Usa emoji con misura
+- Sii diretto e umano
+- Se non ci sono dati dillo gentilmente"""
 
 
 def _clean_sql(raw: str) -> str:
-    """Rimuove markdown extra dal SQL generato da Groq."""
     return re.sub(r"```(?:sql)?", "", raw).strip("`").strip()
-
-
-def _validate_columns(sql: str) -> list[str]:
-    """Controlla che il SQL non contenga colonne inventate. Restituisce lista di colonne sconosciute."""
-    # Estrae parole che potrebbero essere nomi di colonna (dopo SELECT, WHERE, ORDER BY ecc.)
-    # Rimuovi stringhe tra apici, numeri, keywords SQL e funzioni note
-    sql_clean = re.sub(r"'[^']*'", "", sql)  # rimuovi stringhe
-    sql_clean = re.sub(r"\b\d+\b", "", sql_clean)  # rimuovi numeri
-    tokens = re.findall(r"\b([a-z_][a-z0-9_]*)\b", sql_clean.lower())
-
-    sql_keywords = {
-        "select", "from", "where", "join", "on", "and", "or", "not",
-        "in", "like", "between", "is", "null", "order", "by", "group",
-        "having", "limit", "offset", "as", "distinct", "case", "when",
-        "then", "else", "end", "upper", "lower", "coalesce", "sum",
-        "count", "avg", "max", "min", "to_date", "current_date",
-        "interval", "cast", "inner", "left", "right", "outer",
-        "preventivo", "righepreventivo", "desc", "asc", "true", "false",
-        "varchar", "integer", "numeric", "date", "days"
-    }
-
-    unknown = []
-    for token in tokens:
-        if token not in sql_keywords and token not in VALID_COLUMNS and len(token) > 2:
-            unknown.append(token)
-
-    return unknown
 
 
 def _fmt_val(v) -> str:
@@ -136,12 +95,31 @@ def _run_sql(sql: str) -> list[dict]:
             return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+def _generate_sql(user_question: str, error_context: str = "") -> str:
+    """Chiede a Groq di generare SQL. Se c'è un errore precedente lo include per autocorrezione."""
+    messages = [{"role": "system", "content": SYSTEM_SQL}]
+    if error_context:
+        messages.append({"role": "user", "content": user_question})
+        messages.append({"role": "assistant", "content": error_context})
+        messages.append({"role": "user", "content": f"Errore SQL: {error_context}. Genera una query corretta usando SOLO le colonne dello schema."})
+    else:
+        messages.append({"role": "user", "content": user_question})
+
+    resp = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=messages,
+        temperature=0.05,
+        max_tokens=600
+    )
+    return _clean_sql(resp.choices[0].message.content)
+
+
 def _natural(user_question: str, data_text: str) -> str:
     resp = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": SYSTEM_NATURAL},
-            {"role": "user", "content": f'L\'utente ha chiesto: "{user_question}"\n\nDati:\n{data_text}\n\nRispondi in italiano naturale e conciso.'}
+            {"role": "user", "content": f'Domanda: "{user_question}"\n\nDati:\n{data_text}\n\nRispondi in italiano naturale.'}
         ],
         temperature=0.3, max_tokens=300
     )
@@ -149,44 +127,26 @@ def _natural(user_question: str, data_text: str) -> str:
 
 
 def answer_question(user_question: str) -> str:
-    """Pipeline: domanda libera → SQL (Groq) → validazione colonne → esecuzione → risposta naturale."""
-    try:
-        # Step 1: genera SQL
-        resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": SYSTEM_SQL},
-                {"role": "user", "content": user_question}
-            ],
-            temperature=0.05,
-            max_tokens=600
-        )
-        sql = _clean_sql(resp.choices[0].message.content)
+    """Pipeline: domanda → SQL → esecuzione (con retry su errore) → risposta naturale."""
+    last_error = ""
+    for attempt in range(3):  # max 3 tentativi
+        try:
+            sql = _generate_sql(user_question, last_error if attempt > 0 else "")
 
-        # Step 2: valida colonne
-        unknown = _validate_columns(sql)
-        if unknown:
-            # Filtra falsi positivi comuni
-            real_unknown = [u for u in unknown if u not in {
-                "imponibile", "ivato", "attivi", "confermati", "recenti"
-            }]
-            if real_unknown:
-                return (f"⚠️ Non ho trovato nel database alcuni elementi della tua domanda. "
-                        f"Prova a riformulare.\n_(riferimento a: {', '.join(real_unknown[:3])})_")
+            # Blocco sicurezza
+            forbidden = ["insert", "update", "delete", "drop", "alter", "truncate"]
+            if any(k in sql.lower() for k in forbidden):
+                return "⛔ Operazione non permessa."
 
-        # Step 3: esegui
-        rows = _run_sql(sql)
+            rows = _run_sql(sql)
+            data_text = _rows_to_text(rows)
+            return _natural(user_question, data_text)
 
-        # Step 4: risposta naturale
-        data_text = _rows_to_text(rows)
-        return _natural(user_question, data_text)
-
-    except ValueError as e:
-        return f"⛔ {e}"
-    except Exception as e:
-        err = str(e)
-        if "does not exist" in err:
-            return "⚠️ Non ho capito la domanda. Prova a riformularla diversamente."
-        if "out of range" in err or "invalid input" in err:
-            return "⚠️ Problema nel confronto delle date. Prova con: *'consegne di marzo'* o *'scadenze prossimi 7 giorni'*."
-        return f"❌ Problema tecnico. Riprova tra poco."
+        except Exception as e:
+            last_error = str(e)
+            if attempt == 2:  # ultimo tentativo fallito
+                if "does not exist" in last_error:
+                    return "⚠️ Non riesco a trovare i dati per questa domanda. Prova con: *fatturato*, *scadenze*, *clienti*, oppure il nome di un cliente."
+                return "❌ Problema tecnico temporaneo. Riprova tra poco."
+            # continua con retry includendo l'errore
+            continue
