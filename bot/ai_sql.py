@@ -1,6 +1,5 @@
 """
-ai_sql.py — Chat-to-SQL libero con retry automatico su errore.
-L'utente scrive liberamente, Groq genera SQL, se fallisce prova a correggersi.
+ai_sql.py — Chat-to-SQL libero con retry semplificato e preprocessing date.
 """
 
 import re
@@ -11,6 +10,27 @@ from groq import Groq
 from bot.config import GROQ_API_KEY, DATABASE_URL
 
 client = Groq(api_key=GROQ_API_KEY)
+
+
+# ─── Pre-processing date relative ──────────────────────────────────────────
+def _enrich_with_dates(question: str) -> str:
+    """Aggiunge le date concrete alla domanda per aiutare Groq a generare SQL corretto."""
+    today = datetime.date.today()
+    tomorrow = today + datetime.timedelta(days=1)
+    week_end = today + datetime.timedelta(days=7)
+    month_end = today + datetime.timedelta(days=30)
+
+    date_context = (
+        f"[Riferimento temporale: oggi={today.strftime('%Y-%m-%d')}, "
+        f"domani={tomorrow.strftime('%Y-%m-%d')}, "
+        f"fra 7 giorni={week_end.strftime('%Y-%m-%d')}, "
+        f"fra 30 giorni={month_end.strftime('%Y-%m-%d')}] "
+    )
+    # Aggiunge il contesto solo se la domanda contiene riferimenti temporali
+    time_keywords = ["domani", "oggi", "settimana", "mese", "prossim", "giorni", "scadenz", "consegn"]
+    if any(k in question.lower() for k in time_keywords):
+        return date_context + question
+    return question
 
 SYSTEM_SQL = """Sei un esperto SQL per PostgreSQL. Gestisci un database di un'azienda italiana di arredamento su misura chiamata RATIO.
 
@@ -104,15 +124,22 @@ def _run_sql(sql: str) -> list[dict]:
             return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def _generate_sql(user_question: str, error_context: str = "") -> str:
-    """Chiede a Groq di generare SQL. Se c'è un errore precedente lo include per autocorrezione."""
+def _generate_sql(question: str, prev_sql: str = "", prev_error: str = "") -> str:
+    """Chiede a Groq di generare SQL, con correzione automatica se c'è un errore precedente."""
+    enriched = _enrich_with_dates(question)
     messages = [{"role": "system", "content": SYSTEM_SQL}]
-    if error_context:
-        messages.append({"role": "user", "content": user_question})
-        messages.append({"role": "assistant", "content": error_context})
-        messages.append({"role": "user", "content": f"Errore SQL: {error_context}. Genera una query corretta usando SOLO le colonne dello schema."})
+
+    if prev_sql and prev_error:
+        # Retry: mostra il tentativo precedente con il suo errore e chiedi correzione
+        msg = (
+            f"Domanda: {enriched}\n\n"
+            f"Hai generato questo SQL che ha prodotto un errore:\n{prev_sql}\n\n"
+            f"Errore: {prev_error}\n\n"
+            f"Genera un SQL corretto usando SOLO le colonne dello schema elencate."
+        )
+        messages.append({"role": "user", "content": msg})
     else:
-        messages.append({"role": "user", "content": user_question})
+        messages.append({"role": "user", "content": enriched})
 
     resp = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -136,26 +163,29 @@ def _natural(user_question: str, data_text: str) -> str:
 
 
 def answer_question(user_question: str) -> str:
-    """Pipeline: domanda → SQL → esecuzione (con retry su errore) → risposta naturale."""
+    """Pipeline: domanda → SQL → esecuzione (con retry corretto su errore) → risposta naturale."""
+    last_sql = ""
     last_error = ""
-    for attempt in range(3):  # max 3 tentativi
+
+    for attempt in range(2):  # max 2 tentativi
         try:
-            sql = _generate_sql(user_question, last_error if attempt > 0 else "")
+            last_sql = _generate_sql(user_question, last_sql if attempt > 0 else "", last_error if attempt > 0 else "")
 
             # Blocco sicurezza
             forbidden = ["insert", "update", "delete", "drop", "alter", "truncate"]
-            if any(k in sql.lower() for k in forbidden):
-                return "⛔ Operazione non permessa."
+            if any(k in last_sql.lower() for k in forbidden):
+                return "Operazione non permessa."
 
-            rows = _run_sql(sql)
+            rows = _run_sql(last_sql)
             data_text = _rows_to_text(rows)
             return _natural(user_question, data_text)
 
         except Exception as e:
             last_error = str(e)
-            if attempt == 2:  # ultimo tentativo fallito
+            if attempt == 1:  # secondo tentativo fallito
                 if "does not exist" in last_error:
-                    return "⚠️ Non riesco a trovare i dati per questa domanda. Prova con: *fatturato*, *scadenze*, *clienti*, oppure il nome di un cliente."
-                return "❌ Problema tecnico temporaneo. Riprova tra poco."
-            # continua con retry includendo l'errore
-            continue
+                    return "Non riesco a trovare i dati. Prova a riformulare la domanda in modo diverso."
+                if "out of range" in last_error or "invalid input" in last_error:
+                    return "Errore nel formato delle date. Prova con: 'consegne prossimi 7 giorni' o 'scadenze di marzo'."
+                return "Problema tecnico temporaneo. Riprova tra poco."
+            continue  # riprova con la correzione
