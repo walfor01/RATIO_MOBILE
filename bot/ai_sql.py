@@ -1,178 +1,140 @@
 """
-ai_sql.py — Converte domande in linguaggio naturale in query SQL
-             usando Groq (Llama-3.3-70b) e le esegue sul DB in sola lettura.
+ai_sql.py — Router semantico: usa Groq per interpretare la domanda
+             e chiama le query predefinite da queries.py.
              Poi riformatta il risultato in italiano naturale.
 """
 
-import re
-import psycopg
+import decimal
+import datetime
 from groq import Groq
-from bot.config import GROQ_API_KEY, DATABASE_URL
+from bot.config import GROQ_API_KEY
+from bot import queries
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# Schema del database iniettato nel prompt di sistema
-DB_SCHEMA = """
-Database PostgreSQL di RATIO, azienda italiana di arredamento su misura.
+# ─── CATALOGO DELLE QUERY DISPONIBILI ─────────────────────────────────────────
 
-TABELLA: preventivo
-  - id (integer)
-  - nome_cliente (character varying)
-  - data_creazione (date)
-  - status (character varying): valori esatti: 'BOZZA', 'CONFERMATO', 'FATTURATO', 'ANNULLATO'
-  - totale_generale (numeric): totale imponibile in euro
-  - totale_ivato (numeric): totale con IVA in euro
+QUERY_CATALOG = """
+Hai a disposizione queste funzioni per rispondere alle domande dell'utente:
 
-TABELLA: righepreventivo
-  - id (integer)
-  - preventivo_id (integer): FK verso preventivo.id
-  - ambiente (character varying): es. "Cucina", "Camera"
-  - descrizione (character varying)
-  - categoria (character varying)
-  - fornitore (character varying)
-  - quantita (numeric)
-  - prezzo_vendita_no_iva (numeric)
-  - prezzo_vendita_ivato (numeric)
-  - utile_euro (numeric): margine netto in euro
-  - data_consegna (character varying): data nel formato DD/MM/YYYY
-  - data_installazione (character varying): data nel formato DD/MM/YYYY
+1. FATTURATO → domande su fatturato totale, ricavi, vendite, quanto abbiamo fatto
+2. STATISTICHE → domande su quanti preventivi, quante bozze, quanti confermati, situazione generale
+3. SCADENZE → domande su consegne, montaggi, ordini in arrivo, cosa c'è questa settimana/mese
+4. CLIENTI → domande su i migliori clienti, chi ha speso di più, top clienti
+5. RECENTI → domande sugli ultimi preventivi, cosa abbiamo fatto di recente
+6. UTILE → domande su margine, guadagno, utile netto, profitto
+7. FORNITORI → domande su fornitori, acquisti, da chi compriamo
+8. CERCA:[nome] → se l'utente menziona il nome di un cliente specifico (es. "Rossi", "Bianchi")
 
-FORMATO DATE FONDAMENTALE:
-Le colonne data_consegna e data_installazione sono VARCHAR nel formato DD/MM/YYYY.
-Per confrontarle con date usa SEMPRE: TO_DATE(data_consegna, 'DD/MM/YYYY')
-
-ESEMPI DI QUERY CORRETTE:
--- Scadenze prossimi 7 giorni:
-SELECT p.nome_cliente, r.ambiente, r.data_consegna, r.data_installazione
-FROM righepreventivo r JOIN preventivo p ON r.preventivo_id = p.id
-WHERE UPPER(p.status) IN ('CONFERMATO', 'BOZZA')
-  AND (
-    (r.data_consegna IS NOT NULL AND r.data_consegna != '' AND TO_DATE(r.data_consegna, 'DD/MM/YYYY') BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days')
-    OR
-    (r.data_installazione IS NOT NULL AND r.data_installazione != '' AND TO_DATE(r.data_installazione, 'DD/MM/YYYY') BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days')
-  )
-ORDER BY r.data_consegna LIMIT 20;
-
--- Fatturato totale (CONFERMATO + FATTURATO = cantieri attivi e completati):
-SELECT SUM(totale_generale) AS fatturato_totale, COUNT(*) AS numero_preventivi
-FROM preventivo WHERE UPPER(status) IN ('CONFERMATO', 'FATTURATO');
-
--- Preventivi in bozza:
-SELECT COUNT(*) as totale FROM preventivo WHERE UPPER(status) = 'BOZZA';
-
--- Preventivi confermati con cliente:
-SELECT nome_cliente, totale_generale, data_creazione
-FROM preventivo WHERE UPPER(status) = 'CONFERMATO' ORDER BY data_creazione DESC LIMIT 20;
-
-REGOLE OBBLIGATORIE:
-1. SOLO query SELECT. Mai UPDATE, DELETE, INSERT, DROP, ALTER, TRUNCATE.
-2. Rispondi SOLO con SQL puro. Niente markdown, backtick o commenti.
-3. Per status usa SEMPRE UPPER(status).
-4. Per le date usa SEMPRE TO_DATE(colonna, 'DD/MM/YYYY') - formato italiano DD/MM/YYYY.
-5. Prima di filtrare date, aggiungi sempre: colonna IS NOT NULL AND colonna != ''
-6. Non inventare colonne. Usa SOLO quelle elencate sopra.
-7. LIMIT 20 sempre.
+Rispondi SOLO con una delle parole chiave sopra (es: FATTURATO, oppure CERCA:Rossi).
+Non aggiungere nient'altro.
 """
 
-SYSTEM_PROMPT_SQL = f"""Sei un assistente SQL esperto per un gestionale aziendale italiano.
-{DB_SCHEMA}
-Ricevi domande in italiano. Rispondi ESCLUSIVAMENTE con la query SQL, null'altro."""
-
-SYSTEM_PROMPT_NATURAL = """Sei un assistente aziendale italiano per un'azienda di arredamento chiamata RATIO.
-Ricevi dati grezzi da un database e devi trasformarli in una risposta naturale in italiano, concisa e professionale.
-Usa emoji appropriate. Formatta i numeri monetari come euro italiani (es: 181.494,78 €).
-Non mostrare dati tecnici come ID o nomi di colonne. Sii diretto e umano."""
+NATURAL_SYSTEM = """Sei un assistente aziendale professionale italiano per RATIO, azienda di arredamento.
+Trasforma dati grezzi del database in risposte concise, calde e professionali in italiano.
+- Formatta i numeri in euro: es. 181.494,78 €
+- Usa emoji appropriate
+- Sii diretto, non verboso
+- Se non ci sono dati, dillo gentilmente"""
 
 
-def ask_groq_for_sql(user_question: str) -> str:
-    """Chiede a Groq di generare una query SQL dalla domanda dell'utente."""
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT_SQL},
-            {"role": "user", "content": user_question}
-        ],
-        temperature=0.1,
-        max_tokens=500
-    )
-    sql = response.choices[0].message.content.strip()
-    sql = re.sub(r"```(?:sql)?", "", sql).strip("`").strip()
-    return sql
-
-
-def run_readonly_query(sql: str) -> list[dict]:
-    """Esegue la query SQL in modalità read-only e restituisce i risultati."""
-    forbidden = ["insert", "update", "delete", "drop", "alter", "truncate", "create"]
-    sql_lower = sql.lower()
-    for keyword in forbidden:
-        if keyword in sql_lower:
-            raise ValueError(f"Query non permessa: contiene '{keyword}'")
-
-    with psycopg.connect(DATABASE_URL) as conn:
-        conn.read_only = True
-        with conn.cursor() as cur:
-            cur.execute(sql)
-            columns = [desc[0] for desc in cur.description]
-            rows = cur.fetchall()
-            return [dict(zip(columns, row)) for row in rows]
-
-
-def format_rows_as_text(rows: list[dict]) -> str:
-    """Converte i risultati in testo leggibile da passare all'AI per la risposta naturale."""
+def _rows_to_text(rows) -> str:
+    """Converte risultati DB in testo leggibile per l'AI."""
     if not rows:
-        return "Nessun risultato trovato."
+        return "Nessun dato disponibile."
+
+    def fmt_val(v):
+        if isinstance(v, (decimal.Decimal, float)):
+            return f"{float(v):,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
+        if isinstance(v, datetime.date):
+            return v.strftime("%d/%m/%Y")
+        return str(v) if v is not None else "—"
+
+    if isinstance(rows, dict):
+        return "\n".join(f"{k}: {fmt_val(v)}" for k, v in rows.items() if v is not None)
+
     lines = []
-    for row in rows[:15]:
-        parts = []
-        for key, val in row.items():
-            if val is not None:
-                parts.append(f"{key}={val}")
-        lines.append(", ".join(parts))
-    result = "\n".join(lines)
+    for i, row in enumerate(rows[:15], 1):
+        parts = [f"{k}: {fmt_val(v)}" for k, v in row.items() if v is not None]
+        lines.append(f"{i}. " + " | ".join(parts))
     if len(rows) > 15:
-        result += f"\n(... e altri {len(rows) - 15} risultati)"
-    return result
+        lines.append(f"... e altri {len(rows)-15} risultati")
+    return "\n".join(lines)
 
 
-def ask_groq_for_natural_response(user_question: str, data_text: str) -> str:
-    """Chiede a Groq di formulare una risposta naturale in italiano dai dati grezzi."""
-    prompt = f"""L'utente ha chiesto: "{user_question}"
-
-I dati dal database sono:
-{data_text}
-
-Rispondi all'utente in italiano naturale e conciso, come se fossi un assistente aziendale professionale."""
-
-    response = client.chat.completions.create(
+def _natural_response(user_question: str, data_text: str) -> str:
+    """Chiede a Groq di formulare una risposta naturale in italiano."""
+    prompt = f'L\'utente ha chiesto: "{user_question}"\n\nDati dal gestionale:\n{data_text}\n\nRispondi in italiano naturale e conciso.'
+    resp = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT_NATURAL},
+            {"role": "system", "content": NATURAL_SYSTEM},
             {"role": "user", "content": prompt}
         ],
         temperature=0.3,
-        max_tokens=400
+        max_tokens=300
     )
-    return response.choices[0].message.content.strip()
+    return resp.choices[0].message.content.strip()
+
+
+def _route_question(user_question: str) -> str:
+    """Usa Groq per capire quale query usare. Restituisce la keyword."""
+    resp = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": QUERY_CATALOG},
+            {"role": "user", "content": user_question}
+        ],
+        temperature=0.0,
+        max_tokens=20
+    )
+    return resp.choices[0].message.content.strip().upper()
 
 
 def answer_question(user_question: str) -> str:
-    """Pipeline completa: domanda → SQL → esecuzione → risposta in italiano naturale."""
+    """Pipeline principale: domanda → routing → query predefinita → risposta naturale."""
     try:
-        # Step 1: genera SQL
-        sql = ask_groq_for_sql(user_question)
+        intent = _route_question(user_question)
 
-        # Step 2: esegui la query
-        rows = run_readonly_query(sql)
+        if intent == "FATTURATO":
+            data = queries.q_fatturato()
+            data_text = _rows_to_text(data)
 
-        # Step 3: converti i dati in testo grezzo
-        data_text = format_rows_as_text(rows)
+        elif intent == "STATISTICHE":
+            data = queries.q_preventivi_per_status()
+            data_text = _rows_to_text(data)
 
-        # Step 4: chiedi a Groq di rispondere in italiano naturale
-        natural_response = ask_groq_for_natural_response(user_question, data_text)
+        elif intent == "SCADENZE":
+            data = queries.q_scadenze_prossimi_giorni(14)
+            data_text = _rows_to_text(data) if data else "Nessuna scadenza nei prossimi 14 giorni."
 
-        return natural_response
+        elif intent == "CLIENTI":
+            data = queries.q_clienti_principali()
+            data_text = _rows_to_text(data)
 
-    except ValueError as e:
-        return f"⛔ Operazione non permessa: {e}"
+        elif intent == "RECENTI":
+            data = queries.q_preventivi_recenti()
+            data_text = _rows_to_text(data)
+
+        elif intent == "UTILE":
+            data = queries.q_utile_totale()
+            data_text = _rows_to_text(data)
+
+        elif intent == "FORNITORI":
+            data = queries.q_fornitore_statistiche()
+            data_text = _rows_to_text(data)
+
+        elif intent.startswith("CERCA:"):
+            nome = intent.replace("CERCA:", "").strip().capitalize()
+            data = queries.q_cerca_cliente(nome)
+            data_text = _rows_to_text(data) if data else f"Nessun cliente trovato con nome '{nome}'."
+
+        else:
+            # Fallback generico
+            data = queries.q_preventivi_per_status()
+            data_text = _rows_to_text(data)
+
+        return _natural_response(user_question, data_text)
+
     except Exception as e:
-        return f"❌ Non ho capito la domanda o c'è stato un problema tecnico.\nDettaglio: `{e}`"
+        return f"❌ Si è verificato un problema tecnico. Riprova tra poco.\n`{e}`"
