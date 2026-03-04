@@ -4,18 +4,18 @@
   "description": "App Gestionale Ratio Mobile",
   "icons": [
     {
-      "src": "/icons/icon-192.png?v=2",
+      "src": "/icons/icon-192.png?v=3",
       "type": "image/png",
       "sizes": "192x192"
     },
     {
-      "src": "/icons/icon-512.png?v=2",
+      "src": "/icons/icon-512.png?v=3",
       "type": "image/png",
       "sizes": "512x512"
     }
   ],
-  "start_url": "/",
+  "start_url": "/?v=3",
   "background_color": "#FAF8F5",
   "display": "standalone",
-  "theme_color": "#3D3935"
+  "theme_color": "#FAF8F5"
 }

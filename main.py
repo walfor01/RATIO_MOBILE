@@ -13,6 +13,9 @@ def main(page: ft.Page):
     page.window_height = 844
     page.window_resizable = False
     
+    # Forza Light Mode per evitare inversioni colori iOS/PWA non volute
+    page.theme_mode = ft.ThemeMode.LIGHT
+    
     # Colori Tema principale basati sul mockup (Crema / Beige chiaro)
     page.bgcolor = "#FAF8F5"
     page.padding = 0
