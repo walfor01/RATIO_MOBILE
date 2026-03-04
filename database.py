@@ -1,10 +1,14 @@
 import os
 import psycopg
+from psycopg_pool import ConnectionPool
 from dotenv import load_dotenv
 import datetime
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Inizializza un pool di connessioni globale
+pool = ConnectionPool(DATABASE_URL, min_size=1, max_size=10)
 
 def parse_date(date_val):
     """Cerca di interpretare una stringa o datetime restituendo un oggetto datetime.date"""
@@ -32,10 +36,8 @@ def format_date_it(date_val):
     return "Data non valida"
 
 def get_connection():
-    """Restituisce una connessione in sola lettura al database."""
-    conn = psycopg.connect(DATABASE_URL, autocommit=True)
-    conn.read_only = True
-    return conn
+    """Restituisce una connessione dal pool al database."""
+    return pool.connection()
 
 def get_preventivi():
     """Recupera la lista dei preventivi dal database, ordinati per data decrescente."""
