@@ -33,13 +33,12 @@ ITALY_TZ = pytz.timezone("Europe/Rome")
 # ─────────────────────────────── HANDLERS ──────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /start — rivela il Chat ID in modo che possa essere copiato in .env"""
+    """Comando /start — rivela il Chat ID."""
     chat_id = update.effective_chat.id
     await update.message.reply_text(
         f"👋 Ciao! Sono *RATIO Alert Bot*.\n\n"
         f"Il tuo *Chat ID* è: `{chat_id}`\n\n"
-        f"Copialo nel file `.env` come `TELEGRAM_CHAT_ID` e anche su Render "
-        f"tra le variabili d'ambiente. Poi sono pronto!",
+        f"Copialo nel file `.env` come `TELEGRAM_CHAT_ID`.",
         parse_mode="Markdown"
     )
 
@@ -51,8 +50,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📦 /scadenze — Mostra le scadenze dei prossimi 7 giorni\n"
         "❓ /help — Mostra questo messaggio\n\n"
         "💬 *Oppure scrivimi direttamente una domanda tipo:*\n"
-        "• _Quanto abbiamo fatturato a febbraio?_\n"
-        "• _Quali cantieri sono confermati questa settimana?_\n"
+        "• _Quanto abbiamo fatturato?_\n"
+        "• _Quali cantieri sono confermati?_\n"
         "• _Mostrami i preventivi in bozza_",
         parse_mode="Markdown"
     )
@@ -73,7 +72,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     await update.message.reply_text("🤔 Sto elaborando la tua domanda...")
     response = answer_question(user_text)
-    # Niente parse_mode per evitare crash con asterischi/underscore non bilanciati dall'AI
+    # Niente parse_mode per evitare crash con Markdown non bilanciato
     try:
         await update.message.reply_text(response)
     except Exception:
@@ -99,36 +98,24 @@ async def daily_alert_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info("Nessuna scadenza imminente oggi. Alert non inviato.")
 
 
+# ─────────────────────────────── MAIN ──────────────────────────────────────
 
-async def main_async():
-    """Versione async del main, compatibile con Render e qualsiasi ambiente cloud."""
+def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Registra i comandi
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("scadenze", scadenze_command))
-
-    # Gestisce i messaggi di testo libero
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Scheduler: alert alle 08:00 ogni giorno (ora italiana)
-    job_queue = app.job_queue
-    job_queue.run_daily(
+    app.job_queue.run_daily(
         daily_alert_job,
         time=dtime(hour=8, minute=0, tzinfo=ITALY_TZ),
         name="daily_scadenze_alert"
     )
 
     logger.info("🤖 RATIO Bot avviato. In ascolto...")
-    await app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-def main():
-    """Entry point: usa asyncio.run() per garantire l'event loop su qualsiasi OS."""
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    asyncio.run(main_async())
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
