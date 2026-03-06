@@ -3,7 +3,9 @@ main_bot.py — Entry-point del Bot Telegram RATIO.
 Gestisce comandi e messaggi in arrivo, e lancia il job scheduler giornaliero.
 """
 
+import asyncio
 import logging
+import sys
 from datetime import time as dtime
 import pytz
 
@@ -99,9 +101,9 @@ async def daily_alert_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info("Nessuna scadenza imminente oggi. Alert non inviato.")
 
 
-# ─────────────────────────────── MAIN ──────────────────────────────────────
 
-def main():
+async def main_async():
+    """Versione async del main, compatibile con Render e qualsiasi ambiente cloud."""
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     # Registra i comandi
@@ -121,7 +123,14 @@ def main():
     )
 
     logger.info("🤖 RATIO Bot avviato. In ascolto...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    await app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+def main():
+    """Entry point: usa asyncio.run() per garantire l'event loop su qualsiasi OS."""
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":
