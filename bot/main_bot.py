@@ -3,9 +3,7 @@ main_bot.py — Entry-point del Bot Telegram RATIO.
 Gestisce comandi e messaggi in arrivo, e lancia il job scheduler giornaliero.
 """
 
-import asyncio
 import logging
-import sys
 from datetime import time as dtime
 import pytz
 
