@@ -75,7 +75,7 @@ def q_scadenze_prossimi_giorni(giorni: int = 14) -> list[dict]:
             p.status
         FROM righepreventivo r
         JOIN preventivo p ON r.preventivo_id = p.id
-        WHERE UPPER(p.status) IN ('CONFERMATO', 'BOZZA')
+        WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO')
           AND (
             (r.data_consegna IS NOT NULL AND r.data_consegna != ''
              AND TO_DATE(r.data_consegna, '{date_format}') BETWEEN %s AND %s)

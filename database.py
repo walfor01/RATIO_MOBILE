@@ -148,7 +148,7 @@ def get_upcoming_scadenze():
     SELECT r.data_consegna, r.data_installazione, p.nome_cliente, r.ambiente, r.descrizione, p.id as preventivo_id
     FROM righepreventivo r
     JOIN preventivo p ON r.preventivo_id = p.id
-    WHERE UPPER(p.status) IN ('CONFERMATO', 'BOZZA');
+    WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO');
     """
     try:
         with get_connection() as conn:
@@ -174,7 +174,7 @@ def get_all_scadenze():
         p.id as preventivo_id
     FROM righepreventivo r
     JOIN preventivo p ON r.preventivo_id = p.id
-    WHERE UPPER(p.status) IN ('CONFERMATO', 'BOZZA')
+    WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO')
       AND (r.data_consegna IS NOT NULL OR r.data_installazione IS NOT NULL);
     """
     try:

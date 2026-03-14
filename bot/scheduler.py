@@ -26,7 +26,7 @@ def get_scadenze_imminenti() -> list[dict]:
         p.id as preventivo_id
     FROM righepreventivo r
     JOIN preventivo p ON r.preventivo_id = p.id
-    WHERE UPPER(p.status) IN ('CONFERMATO', 'BOZZA')
+    WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO')
       AND (
           (r.data_consegna IS NOT NULL AND r.data_consegna BETWEEN %s AND %s)
           OR
