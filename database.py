@@ -8,7 +8,7 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Inizializza un pool di connessioni globale
-pool = ConnectionPool(DATABASE_URL, min_size=1, max_size=10)
+pool = ConnectionPool(DATABASE_URL, min_size=1, max_size=10, kwargs={"autocommit": True})
 
 def parse_date(date_val):
     """Cerca di interpretare una stringa o datetime restituendo un oggetto datetime.date"""
