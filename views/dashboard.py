@@ -286,13 +286,18 @@ def DashboardView(page: ft.Page):
         )
         
     recent_projects_controls = [
-        ft.Text("Progetti Recenti", size=18, weight=ft.FontWeight.BOLD, color=text_color),
+        ft.Text("Ultimi Progetti Attivi", size=18, weight=ft.FontWeight.BOLD, color=text_color),
         ft.Container(height=5),
     ]
     
     if preventivi_data:
+        # Filtriamo per escludere le Bozze, mostrando solo i progetti reali
+        progetti_attivi = [r for r in preventivi_data if str(r.get("status", "")).upper() in ("CONFERMATO", "FATTURATO")]
+        
         # Prende solo gli ultimi 3 per la home
-        for row in preventivi_data[:3]:
+        if not progetti_attivi:
+            recent_projects_controls.append(ft.Text("Nessun progetto attivo trovato.", color=text_color))
+        for row in progetti_attivi[:3]:
             nome_cliente = row.get("nome_cliente") or "Sconosciuto"
             status = row.get("status") or "N/A"
             totale = row.get("totale_generale") or 0.0
