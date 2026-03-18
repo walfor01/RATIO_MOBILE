@@ -1,5 +1,5 @@
 import flet as ft
-from database import get_preventivo_by_id, get_righe_preventivo, format_date_it
+from database import get_preventivo_by_id, get_righe_preventivo, format_date_it, format_eur
 
 def DettaglioProgettoView(page: ft.Page, project_id: int, go_back_func):
     """Componente per visualizzare i dettagli di un singolo Progetto - Stile RATIO"""
@@ -47,7 +47,7 @@ def DettaglioProgettoView(page: ft.Page, project_id: int, go_back_func):
         status_text = "Completato"
         status_bg = "#8A837C"
         
-    totale_str = f"€ {totale:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    totale_str = format_eur(totale)
 
     # 2. Titolo
     title_row = ft.Text("Dettaglio Progetto", size=24, weight=ft.FontWeight.W_600, color=text_color)
@@ -73,8 +73,8 @@ def DettaglioProgettoView(page: ft.Page, project_id: int, go_back_func):
     # Prendiamo la descrizione dalla testata del preventivo
     descrizione_progetto = preventivo.get("descrizione") or preventivo.get("note") or "Nessuna descrizione specificata."
         
-    delta_str = f"€ {totale_utile:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    imponibile_str = f"€ {totale_imponibile:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    delta_str = format_eur(totale_utile)
+    imponibile_str = format_eur(totale_imponibile)
 
     # 3. Card Hero (Riepilogo alto)
     hero_card = ft.Container(
@@ -112,7 +112,7 @@ def DettaglioProgettoView(page: ft.Page, project_id: int, go_back_func):
         for r in righe:
             desc = r.get("descrizione") or r.get("ambiente") or "Voce generica"
             prezz_fin = r.get("prezzo_vendita_no_iva") or 0.0
-            val_str = f"€ {prezz_fin:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            val_str = format_eur(prezz_fin)
             
             # Tronchiamo la descrizione se troppo lunga per stare nella row
             desc_tronc = desc[:32] + "..." if len(desc) > 32 else desc

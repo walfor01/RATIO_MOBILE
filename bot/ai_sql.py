@@ -8,6 +8,7 @@ import datetime
 import psycopg
 from groq import Groq
 from bot.config import GROQ_API_KEY, DATABASE_URL
+from database import format_eur
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -91,7 +92,7 @@ def _clean_sql(raw: str) -> str:
 
 def _fmt_val(v) -> str:
     if isinstance(v, (decimal.Decimal, float)):
-        return f"{float(v):,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
+        return format_eur(v)
     if isinstance(v, datetime.date):
         return v.strftime("%d/%m/%Y")
     return str(v) if v is not None else "—"

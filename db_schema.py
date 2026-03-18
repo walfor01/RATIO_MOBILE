@@ -13,7 +13,7 @@ def print_schema():
     tables = [r[0] for r in cur.fetchall()]
     for t in tables:
         print(f"Tabella: {t}")
-        cur.execute(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{t}';")
+        cur.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = %s;", (t,))
         for col in cur.fetchall():
             print(f"   - {col[0]} ({col[1]})")
 

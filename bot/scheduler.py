@@ -28,9 +28,11 @@ def get_scadenze_imminenti() -> list[dict]:
     JOIN preventivo p ON r.preventivo_id = p.id
     WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO') AND r.parent_id IS NULL
       AND (
-          (r.data_consegna IS NOT NULL AND r.data_consegna BETWEEN %s AND %s)
+          (r.data_consegna IS NOT NULL AND r.data_consegna != ''
+           AND TO_DATE(r.data_consegna, 'DD/MM/YYYY') BETWEEN %s AND %s)
           OR
-          (r.data_installazione IS NOT NULL AND r.data_installazione BETWEEN %s AND %s)
+          (r.data_installazione IS NOT NULL AND r.data_installazione != ''
+           AND TO_DATE(r.data_installazione, 'DD/MM/YYYY') BETWEEN %s AND %s)
       )
     ORDER BY LEAST(
         COALESCE(r.data_consegna, '9999-01-01'),

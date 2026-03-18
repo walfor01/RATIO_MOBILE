@@ -1,5 +1,5 @@
 import flet as ft
-from database import get_dashboard_stats, get_preventivi, get_upcoming_scadenze, parse_date, get_redditivita_stats
+from database import get_dashboard_stats, get_preventivi, get_upcoming_scadenze, parse_date, get_redditivita_stats, format_eur
 import datetime
 
 def DashboardView(page: ft.Page):
@@ -54,7 +54,7 @@ def DashboardView(page: ft.Page):
             legen_items.append(
                 ft.Row([
                     ft.Container(width=10, height=10, bgcolor=col, border_radius=2),
-                    ft.Text(f"{row['categoria']}: € {valore:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), size=10, color=text_color)
+                    ft.Text(f"{row['categoria']}: {format_eur(valore)}", size=10, color=text_color)
                 ], spacing=4)
             )
             
@@ -66,7 +66,7 @@ def DashboardView(page: ft.Page):
         )
         
         return ft.Column([
-            ft.Text(f"Totale {chart_view_mode.replace('_', ' ').title()}: € {totale_globale:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), size=14, weight=ft.FontWeight.BOLD, color=text_color),
+            ft.Text(f"Totale {chart_view_mode.replace('_', ' ').title()}: {format_eur(totale_globale)}", size=14, weight=ft.FontWeight.BOLD, color=text_color),
             ft.Container(content=chart, height=220, alignment=ft.alignment.center),
             ft.Container(height=10),
             ft.Text("Dettaglio Categorie:", size=11, weight=ft.FontWeight.W_600, color="#8F8A84"),
@@ -299,7 +299,7 @@ def DashboardView(page: ft.Page):
             id_proj = row.get('id', '?')
             
             # Formatta totali ed eventuale logica
-            totale_str = f"{totale:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            totale_str = format_eur(totale, show_symbol=False)
             
             # Logica colori identica
             status_upper = status.upper()

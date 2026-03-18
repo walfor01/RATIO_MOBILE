@@ -176,7 +176,7 @@ def PreventiviView(page: ft.Page):
                                 controls=[
                                     ft.Column([
                                         ft.Text(f"Creato il {data_creazione}", size=11, color="#A19A8F"),
-                                        ft.Text(f"Totale € {totale:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), size=13, color=text_color),
+                                        ft.Text(f"Totale {format_eur(totale)}", size=13, color=text_color),
                                     ], spacing=2),
                                     ft.Icon(ft.icons.CHEVRON_RIGHT, color="#C7C0B8", size=20)
                                 ],
