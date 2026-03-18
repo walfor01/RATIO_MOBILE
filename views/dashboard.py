@@ -145,13 +145,13 @@ def DashboardView(page: ft.Page):
                         # Scadenze critiche alert superiore
                         if dt == oggi:
                             scadenze_oggi += 1
-                            nome = r.get("ambiente") or r.get("descrizione") or "Articolo"
+                            nome = r.get("descrizione") or r.get("ambiente") or "Articolo"
                             cliente = r.get("nome_cliente") or "Cliente"
                             tipo = "Consegna" if col == "data_consegna" else "Montaggio"
                             scadenze_oggi_list.append({"text": f"{cliente} - {nome} ({tipo})", "id": r.get("preventivo_id")})
                         elif dt == domani:
                             scadenze_domani += 1
-                            nome = r.get("ambiente") or r.get("descrizione") or "Articolo"
+                            nome = r.get("descrizione") or r.get("ambiente") or "Articolo"
                             cliente = r.get("nome_cliente") or "Cliente"
                             tipo = "Consegna" if col == "data_consegna" else "Montaggio"
                             scadenze_domani_list.append({"text": f"{cliente} - {nome} ({tipo})", "id": r.get("preventivo_id")})

@@ -28,7 +28,7 @@ def ScadenzeView(page: ft.Page):
     for r in raw_data:
         cliente = r.get("nome_cliente") or "Sconosciuto"
         fornitore = r.get("fornitore") or "Sconosciuto"
-        articolo = r.get("ambiente") or r.get("descrizione") or "Articolo"
+        articolo = r.get("descrizione") or r.get("ambiente") or "Articolo"
         qta = r.get("quantita") or 1
         pid = r.get("preventivo_id")
         

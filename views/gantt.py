@@ -50,7 +50,7 @@ def GanttView(page: ft.Page):
             if dt_obj and dt_obj.year == current_year:
                 stats_per_month[dt_obj.month] += 1
         
-        articolo = r.get("ambiente") or r.get("descrizione") or "Articolo"
+        articolo = r.get("descrizione") or r.get("ambiente") or "Articolo"
         
         projects[pid]["items"].append({
             "articolo": articolo,

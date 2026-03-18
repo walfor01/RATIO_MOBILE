@@ -63,7 +63,7 @@ def build_alert_message() -> str | None:
 
     for s in scadenze:
         cliente = s.get("nome_cliente", "N/A")
-        ambiente = s.get("ambiente") or s.get("descrizione") or "Articolo"
+        ambiente = s.get("descrizione") or s.get("ambiente") or "Articolo"
         pid = s.get("preventivo_id", "")
 
         # Scadenza consegna

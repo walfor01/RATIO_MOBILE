@@ -107,20 +107,20 @@ def DettaglioProgettoView(page: ft.Page, project_id: int, go_back_func):
     def render_riepilogo():
         # Costruzione del contenuto Riepilogo ("Preventivo", "Scadenze", "Note") come da mockup
         
-        # Preventivo section (somme raggruppate per ambiente)
-        ambienti_dict = {}
+        # Preventivo section (Elenco di tutte le righe/voci per Descrizione)
+        voci_rows = []
         for r in righe:
-            amb = r.get("ambiente") or "Generico"
+            desc = r.get("descrizione") or r.get("ambiente") or "Voce generica"
             prezz_fin = r.get("prezzo_vendita_no_iva") or 0.0
-            ambienti_dict[amb] = ambienti_dict.get(amb, 0.0) + prezz_fin
+            val_str = f"€ {prezz_fin:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             
-        ambienti_rows = []
-        for amb, val in ambienti_dict.items():
-            val_str = f"€ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            ambienti_rows.append(
+            # Tronchiamo la descrizione se troppo lunga per stare nella row
+            desc_tronc = desc[:32] + "..." if len(desc) > 32 else desc
+            
+            voci_rows.append(
                 ft.Row([
-                    ft.Text(amb, size=13, color=text_color),
-                    ft.Text(val_str, size=13, color=text_color)
+                    ft.Text(desc_tronc, size=13, color=text_color, tooltip=desc),
+                    ft.Text(val_str, size=13, color=text_color, weight=ft.FontWeight.W_500)
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
             )
             
@@ -130,8 +130,8 @@ def DettaglioProgettoView(page: ft.Page, project_id: int, go_back_func):
                 ft.Text("Preventivo", weight=ft.FontWeight.BOLD, color=text_color, size=14),
                 ft.Container(height=5),
                 ft.Container(
-                    content=ft.Column(ambienti_rows, spacing=2, scroll=ft.ScrollMode.AUTO),
-                    height=130 # Fissiamo un'altezza, così se gli ambienti sono 20 si attiva lo scroll interno alla cornicetta
+                    content=ft.Column(voci_rows, spacing=4, scroll=ft.ScrollMode.AUTO),
+                    height=130 # Fissiamo un'altezza per scroll interno
                 )
             ], spacing=2),
             border=ft.border.all(1, "#EAE1D8"),
@@ -200,7 +200,7 @@ def DettaglioProgettoView(page: ft.Page, project_id: int, go_back_func):
             if r.get("data_consegna"):
                 dt = format_date_it(r.get("data_consegna"))
                 if dt != "Data non valida":
-                    nome = r.get("ambiente") or r.get("descrizione") or "Articolo"
+                    nome = r.get("descrizione") or r.get("ambiente") or "Articolo"
                     if dt not in consegne_dict:
                         consegne_dict[dt] = []
                     consegne_dict[dt].append(nome)
@@ -209,7 +209,7 @@ def DettaglioProgettoView(page: ft.Page, project_id: int, go_back_func):
             if r.get("data_installazione"):
                 dt = format_date_it(r.get("data_installazione"))
                 if dt != "Data non valida":
-                    nome = r.get("ambiente") or r.get("descrizione") or "Articolo"
+                    nome = r.get("descrizione") or r.get("ambiente") or "Articolo"
                     if dt not in montaggi_dict:
                         montaggi_dict[dt] = []
                     montaggi_dict[dt].append(nome)
