@@ -128,7 +128,7 @@ def get_righe_preventivo(pid):
     query = """
     SELECT *
     FROM righepreventivo 
-    WHERE preventivo_id = %s
+    WHERE preventivo_id = %s AND parent_id IS NULL
     ORDER BY id ASC;
     """
     try:
@@ -148,7 +148,7 @@ def get_upcoming_scadenze():
     SELECT r.data_consegna, r.data_installazione, p.nome_cliente, r.ambiente, r.descrizione, p.id as preventivo_id
     FROM righepreventivo r
     JOIN preventivo p ON r.preventivo_id = p.id
-    WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO');
+    WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO') AND r.parent_id IS NULL;
     """
     try:
         with get_connection() as conn:
@@ -175,7 +175,8 @@ def get_all_scadenze():
     FROM righepreventivo r
     JOIN preventivo p ON r.preventivo_id = p.id
     WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO')
-      AND (r.data_consegna IS NOT NULL OR r.data_installazione IS NOT NULL);
+      AND (r.data_consegna IS NOT NULL OR r.data_installazione IS NOT NULL)
+      AND r.parent_id IS NULL;
     """
     try:
         with get_connection() as conn:
@@ -196,7 +197,7 @@ def get_redditivita_stats():
         SUM(COALESCE(r.prezzo_vendita_no_iva, 0)) AS fatturato_no_iva
     FROM righepreventivo r
     JOIN preventivo p ON r.preventivo_id = p.id
-    WHERE UPPER(p.status) IN ('FATTURATO', 'CONFERMATO')
+    WHERE UPPER(p.status) IN ('FATTURATO', 'CONFERMATO') AND r.parent_id IS NULL
     GROUP BY COALESCE(r.categoria, 'Altro')
     HAVING SUM(COALESCE(r.prezzo_vendita_no_iva, 0)) > 0
     ORDER BY utile_netto DESC

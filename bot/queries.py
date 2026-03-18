@@ -75,7 +75,7 @@ def q_scadenze_prossimi_giorni(giorni: int = 14) -> list[dict]:
             p.status
         FROM righepreventivo r
         JOIN preventivo p ON r.preventivo_id = p.id
-        WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO')
+        WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO') AND r.parent_id IS NULL
           AND (
             (r.data_consegna IS NOT NULL AND r.data_consegna != ''
              AND TO_DATE(r.data_consegna, '{date_format}') BETWEEN %s AND %s)
@@ -117,7 +117,7 @@ def q_utile_totale() -> dict:
         SELECT SUM(r.utile_euro) AS utile_totale
         FROM righepreventivo r
         JOIN preventivo p ON r.preventivo_id = p.id
-        WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO')
+        WHERE UPPER(p.status) IN ('CONFERMATO', 'FATTURATO') AND r.parent_id IS NULL
     """)
     return rows[0] if rows else {}
 
@@ -127,7 +127,7 @@ def q_fornitore_statistiche() -> list[dict]:
     return _exec("""
         SELECT fornitore, COUNT(*) AS righe, SUM(prezzo_vendita_no_iva) AS valore_totale
         FROM righepreventivo
-        WHERE fornitore IS NOT NULL AND fornitore != ''
+        WHERE fornitore IS NOT NULL AND fornitore != '' AND parent_id IS NULL
         GROUP BY fornitore
         ORDER BY valore_totale DESC
         LIMIT 15
