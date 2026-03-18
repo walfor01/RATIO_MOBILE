@@ -35,6 +35,15 @@ def format_date_it(date_val):
         return dt.strftime("%d/%m/%Y")
     return "Data non valida"
 
+def format_eur(val, show_symbol=True):
+    """Formatta un numero in Euro (es: € 1.234,56 o 1.234,56)."""
+    try:
+        val_float = float(val) if val else 0.0
+        formattato = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"€ {formattato}" if show_symbol else formattato
+    except (ValueError, TypeError):
+        return "€ 0,00" if show_symbol else "0,00"
+
 def get_connection():
     """Restituisce una connessione dal pool al database."""
     return pool.connection()
