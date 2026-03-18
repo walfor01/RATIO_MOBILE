@@ -154,9 +154,12 @@ def GanttView(page: ft.Page):
         bar_groups=chart_groups,
         border=ft.border.all(0, ft.colors.TRANSPARENT),
         left_axis=ft.ChartAxis(
-            labels_size=20,
+            labels_size=30,
             title=ft.Text("QTA", size=9, color="#8F8A84"),
-            labels_interval=max(1, max_val // 4)
+            labels=[
+                ft.ChartAxisLabel(value=i, label=ft.Text(str(i), size=10, color="#8F8A84"))
+                for i in range(0, int(max_val) + 2 + int(max_val * 0.2), max(1, int(max_val) // 4))
+            ],
         ),
         bottom_axis=ft.ChartAxis(
             labels=[
