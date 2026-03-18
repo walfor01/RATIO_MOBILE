@@ -10,9 +10,9 @@ def GanttView(page: ft.Page):
     
     raw_data = get_all_scadenze()
     
-    mesi_it_short = {
-        1: "Gen", 2: "Feb", 3: "Mar", 4: "Apr", 5: "Mag", 6: "Giu",
-        7: "Lug", 8: "Ago", 9: "Set", 10: "Ott", 11: "Nov", 12: "Dic"
+    mesi_it_full = {
+        1: "Gennaio", 2: "Febbraio", 3: "Marzo", 4: "Aprile", 5: "Maggio", 6: "Giugno",
+        7: "Luglio", 8: "Agosto", 9: "Settembre", 10: "Ottobre", 11: "Novembre", 12: "Dicembre"
     }
     
     current_year = datetime.date.today().year
@@ -143,7 +143,7 @@ def GanttView(page: ft.Page):
                         to_y=val,
                         width=12,
                         color="#C25925" if val > 0 else "#EAE1D8",
-                        tooltip=f"{mesi_it_short[i]}: {val} task",
+                        tooltip=f"{mesi_it_full[i]}: {val} consegne",
                         border_radius=4,
                     )
                 ]
@@ -160,7 +160,7 @@ def GanttView(page: ft.Page):
         ),
         bottom_axis=ft.ChartAxis(
             labels=[
-                ft.ChartAxisLabel(value=i-1, label=ft.Text(mesi_it_short[i], size=9, color="#6C665F"))
+                ft.ChartAxisLabel(value=i-1, label=ft.Text(mesi_it_full[i][0], size=10, weight=ft.FontWeight.BOLD, color="#6C665F"))
                 for i in range(1, 13)
             ],
             labels_size=20,
