@@ -1,5 +1,5 @@
 import flet as ft
-from database import get_preventivi, format_date_it
+from database import get_preventivi, format_date_it, format_eur
 from datetime import datetime
 
 def PreventiviView(page: ft.Page):
