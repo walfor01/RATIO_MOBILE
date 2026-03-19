@@ -132,7 +132,7 @@ def DettaglioProgettoView(page: ft.Page, project_id: int, go_back_func):
         # Riquadro Preventivo Scrollabile
         prev_container = ft.Container(
             content=ft.Column([
-                ft.Text("Preventivo", weight=ft.FontWeight.BOLD, color=text_color, size=14),
+                ft.Text("Preventivo (Imponibile)", weight=ft.FontWeight.BOLD, color=text_color, size=14),
                 ft.Container(height=5),
                 ft.Container(
                     content=ft.Column(voci_rows, spacing=4, scroll=ft.ScrollMode.AUTO),
