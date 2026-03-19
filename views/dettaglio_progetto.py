@@ -75,6 +75,10 @@ def DettaglioProgettoView(page: ft.Page, project_id: int, go_back_func):
         
     delta_str = format_eur(totale_utile)
     imponibile_str = format_eur(totale_imponibile)
+    
+    # Costo Studio = Imponibile - Delta (utile)
+    totale_costo = totale_imponibile - totale_utile
+    costo_str = format_eur(totale_costo)
 
     # 3. Card Hero (Riepilogo alto)
     hero_card = ft.Container(
@@ -93,6 +97,7 @@ def DettaglioProgettoView(page: ft.Page, project_id: int, go_back_func):
             ft.Text(f"Cliente: {nome_cliente}", size=13, color=text_color),
             ft.Text(f"Tot. Imponibile: {imponibile_str}", size=13, color=text_color),
             ft.Text(f"Tot. Ivato: {totale_str}", size=13, color=text_color),
+            ft.Text(f"Costo Studio: {costo_str}", size=13, color=text_color),
             ft.Text(f"Delta: {delta_str}", size=13, color=text_color),
         ], spacing=2),
         bgcolor=bg_card,
